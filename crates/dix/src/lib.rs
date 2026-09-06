@@ -150,12 +150,16 @@ fn looks_like_git_hash_component(component: &str) -> bool {
 }
 
 fn path_to_canonical_string(path: &Path) -> Result<String> {
-  let path = path.canonicalize().with_context(|| {
-    format!(
-      "failed to canonicalize path '{path}'",
-      path = path.display(),
-    )
-  })?;
+  let path = if path.parent() == Some(Path::new("/nix/store")) {
+    path.to_path_buf()
+  } else {
+    path.canonicalize().with_context(|| {
+      format!(
+        "failed to canonicalize path '{path}'",
+        path = path.display(),
+      )
+    })?
+  };
 
   let path = path.into_os_string().into_string().map_err(|path| {
     tracing::debug!("path contains invalid unicode characters");

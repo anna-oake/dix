@@ -56,8 +56,11 @@ impl SnapshotFile {
   /// # Errors
   /// Fails if the output or its metadata cannot be read.
   pub fn capture(root: &Path) -> Result<Self> {
-    let root =
-      fs::canonicalize(root).wrap_err("cannot resolve snapshot root")?;
+    let root = if root.parent() == Some(Path::new("/nix/store")) {
+      root.to_path_buf()
+    } else {
+      fs::canonicalize(root).wrap_err("cannot resolve snapshot root")?
+    };
     let snapshot = query_store_snapshot(&root, true)?;
     let mut closure = snapshot
       .closure
