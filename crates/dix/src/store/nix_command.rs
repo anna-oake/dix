@@ -179,6 +179,10 @@ impl StoreBackend for CommandBackend {
   }
 
   fn query_system_derivations(&self, system: &Path) -> Result<Vec<StorePath>> {
+    // Arbitrary package outputs have no system profile. Match the SQL backend.
+    if !system.join("sw").exists() {
+      return Ok(Vec::new());
+    }
     let output = self
       .nix_store_command()
       .args(["--query", "--references"])

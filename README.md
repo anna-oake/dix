@@ -7,6 +7,49 @@ package).
 
 ![output of `dix /nix/var/nix/profiles/system-69-link/ /run/current-system`](.github/dix.png)
 
+## Persistent snapshots
+
+This fork adds versioned snapshot files while keeping the upstream version and
+`dix OLD NEW` interface unchanged. Pin the fork revision when packaging it.
+
+```sh
+# Capture a built NixOS/nix-darwin system or any other built store output.
+# The parent directory must exist. --file publishes the JSON atomically.
+dix snapshot /run/current-system --file current.json
+
+# Without --file, compact JSON is written to stdout.
+dix snapshot /run/current-system > current.json
+
+# These commands need neither Nix nor the original store paths.
+dix diff-snapshots old.json new.json
+dix diff-snapshots old.json new.json --output json
+```
+
+Snapshot export always uses the correctness-preserving backend chain. Keep the
+output GC-rooted until export completes. Snapshot commands require the `json`
+Cargo feature, enabled by default. Diagnostics go to stderr, including with `-v`.
+
+Schema version 1 contains `schema_version`, `root` (canonical store path),
+`closure` (unique objects with `path` and `nar_size`, in bytes), and `selected`
+(store paths selected by the system profile). Generic package outputs normally
+have an empty `selected` list. Export sorts paths deterministically. Import
+rejects unsupported versions, malformed paths, duplicates, negative/overflowing
+sizes, and roots or selected paths missing from the closure. Store paths are
+validated syntactically, never looked up during import or comparison.
+
+These files preserve the data needed for the existing package/version, selection,
+path-count, and NAR-size reports. They do not contain file contents or NixOS
+option values. Raw `nix path-info --json` is not this format. Repository, commit,
+and host indexing belong to the caller, not the portable snapshot.
+
+For Buildbot, export while the result link still protects the output, and reuse
+snapshots for outputs skipped because they were already built. The future
+`nix-diffs` service will index snapshots under
+`/var/lib/nix-diffs/snapshots/<owner>/<repo>/<commit>/<path-name>.json`, serve
+`/diff/<owner>/<repo>/<old-commit>/<new-commit>`, and cache comparison JSON under
+`/var/lib/nix-diffs/diffs/<owner>/<repo>/<old-commit>/<new-commit>/<path-name>.json`.
+That service and GitHub posting are not implemented by this fork.
+
 ## Usage
 ```bash
 $ dix --help

@@ -14,6 +14,7 @@ use eyre::{
 };
 
 #[cfg(feature = "json")] pub mod json;
+#[cfg(feature = "json")] pub mod snapshot_file;
 
 pub use dix_diff::{
   DiffStatus,

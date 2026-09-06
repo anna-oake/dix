@@ -8,6 +8,10 @@ This is a changelog of the `dix` repository. It follows the
 
 ### Added
 
+- Fork: versioned JSON snapshot export (`dix snapshot`) and offline comparison
+  (`dix diff-snapshots`), with atomic file output and strict input validation.
+  Package version remains unchanged; consumers should pin the fork revision.
+
 ### Fixed
 
 ### Changed

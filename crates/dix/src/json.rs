@@ -35,7 +35,11 @@ pub fn display_diff(
   generate_diff(&mut std::io::stdout(), &report)
 }
 
-fn generate_diff(out: &mut dyn Write, report: &DiffReport) -> Result<()> {
+/// Write an already computed report without querying Nix.
+///
+/// # Errors
+/// Returns an error if JSON serialization or writing fails.
+pub fn generate_diff(out: &mut dyn Write, report: &DiffReport) -> Result<()> {
   serde_json::to_writer(out, &JsonReport::from(report))
     .context("Failed to write json output.")
 }

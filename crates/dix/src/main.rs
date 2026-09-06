@@ -29,10 +29,20 @@ impl<W: io::Write> fmt::Write for WriteFmt<W> {
 }
 
 #[derive(clap::Parser, Debug)]
-#[command(version, about)]
+#[command(
+  version,
+  about,
+  args_conflicts_with_subcommands = true,
+  subcommand_negates_reqs = true
+)]
 struct Cli {
-  old_path: PathBuf,
-  new_path: PathBuf,
+  #[arg(required = true)]
+  old_path: Option<PathBuf>,
+  #[arg(required = true)]
+  new_path: Option<PathBuf>,
+
+  #[command(subcommand)]
+  command: Option<Command>,
 
   #[command(flatten)]
   verbose: clap_verbosity_flag::Verbosity,
@@ -63,8 +73,25 @@ struct Cli {
   output: OutputFormat,
 }
 
+/// Snapshot operations; ordinary positional comparisons remain supported.
+#[derive(clap::Subcommand, Debug)]
+enum Command {
+  /// Export a versioned snapshot of a built output (requires the json feature).
+  Snapshot {
+    path: PathBuf,
+    /// Atomically write to this file instead of stdout.
+    #[arg(long)]
+    file: Option<PathBuf>,
+  },
+  /// Compare snapshot files without Nix or the original store paths.
+  DiffSnapshots {
+    old_snapshot: PathBuf,
+    new_snapshot: PathBuf,
+  },
+}
+
 /// Determines the output format to be used by dix.
-#[derive(Debug, Clone, clap::ValueEnum, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, clap::ValueEnum, Eq, PartialEq)]
 enum OutputFormat {
   /// Output in the default dix format highlighting version changes.
   Human,
@@ -80,32 +107,8 @@ fn main() -> eyre::Result<()> {
     color,
     force_correctness,
     output,
+    command,
   } = Cli::parse();
-
-  tracing::debug!(
-    old_path = %old_path.display(),
-    new_path = %new_path.display(),
-    force_correctness = force_correctness,
-    "starting dix"
-  );
-
-  // Validate that both paths exist before proceeding
-  if !old_path.exists() {
-    tracing::error!(path = %old_path.display(), "old profile path does not exist");
-    return Err(eyre!(
-      "old profile path does not exist: {}",
-      old_path.display()
-    ));
-  }
-  if !new_path.exists() {
-    tracing::error!(path = %new_path.display(), "new profile path does not exist");
-    return Err(eyre!(
-      "new profile path does not exist: {}",
-      new_path.display()
-    ));
-  }
-
-  tracing::info!(old_path = %old_path.display(), new_path = %new_path.display(), "paths validated");
 
   yansi::whenever(match color {
     clap::ColorChoice::Auto => yansi::Condition::from(should_style),
@@ -136,10 +139,22 @@ fn main() -> eyre::Result<()> {
         })
         .from_env_lossy(),
     )
+    .with_writer(io::stderr)
     .with_ansi(should_style())
     .with_target(false)
     .without_time()
     .init();
+
+  if let Some(command) = command {
+    return run_snapshot_command(command, output);
+  }
+  let old_path = old_path.ok_or_else(|| eyre!("old path is required"))?;
+  let new_path = new_path.ok_or_else(|| eyre!("new path is required"))?;
+  for path in [&old_path, &new_path] {
+    if !path.exists() {
+      return Err(eyre!("profile path does not exist: {}", path.display()));
+    }
+  }
 
   if force_correctness {
     tracing::warn!(
@@ -158,12 +173,60 @@ fn main() -> eyre::Result<()> {
     #[cfg(not(feature = "json"))]
     OutputFormat::Json => {
       return Err(eyre!(
-        "The 'json' feature is required to use '--json-output'."
+        "The 'json' feature is required to use '--output json'."
       ));
     },
   }
 
   Ok(())
+}
+
+#[cfg(feature = "json")]
+fn run_snapshot_command(
+  command: Command,
+  output: OutputFormat,
+) -> eyre::Result<()> {
+  use dix::snapshot_file::SnapshotFile;
+  match command {
+    Command::Snapshot { path, file } => {
+      // Snapshot data must remain dependable after the source is collected.
+      let snapshot = SnapshotFile::capture(&path)?;
+      if let Some(file) = file {
+        snapshot.write_atomic(&file)?;
+      } else {
+        snapshot.write(io::stdout().lock())?;
+      }
+    },
+    Command::DiffSnapshots {
+      old_snapshot,
+      new_snapshot,
+    } => {
+      let old = SnapshotFile::read(fs::File::open(old_snapshot)?)?;
+      let new = SnapshotFile::read(fs::File::open(new_snapshot)?)?;
+      let report =
+        dix::diff_store_snapshots(&old.to_snapshot()?, &new.to_snapshot()?);
+      match output {
+        OutputFormat::Human => {
+          let mut out = WriteFmt(io::stdout().lock());
+          writeln!(out, "<<< {}", old.root)?;
+          writeln!(out, ">>> {}", new.root)?;
+          dix::write_diff_report(&mut out, &report)?;
+        },
+        OutputFormat::Json => {
+          json::generate_diff(&mut io::stdout().lock(), &report)?;
+        },
+      }
+    },
+  }
+  Ok(())
+}
+
+#[cfg(not(feature = "json"))]
+fn run_snapshot_command(
+  _command: Command,
+  _output: OutputFormat,
+) -> eyre::Result<()> {
+  Err(eyre!("snapshot commands require the 'json' feature"))
 }
 
 fn display_diff(
